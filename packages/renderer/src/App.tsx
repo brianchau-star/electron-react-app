@@ -44,10 +44,11 @@ function App() {
         const result = poseLandmarker.detectForVideo(video, startTimeMs);
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-
+        canvasCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
         // Vẽ segmentation masks
         if (result.segmentationMasks && result.segmentationMasks.length > 0) {
           const mask = result.segmentationMasks[0];
+          const maskData = mask.getAsFloat32Array();
           const imageData = canvasCtx.getImageData(
             0,
             0,
@@ -56,21 +57,29 @@ function App() {
           );
           const data = imageData.data;
 
+          const overlayColor = { r: 0, g: 255, b: 0 };
+
           for (let i = 0; i < mask.width * mask.height; i++) {
-            const maskValue = mask.getAsFloat32Array()[i];
-            if (maskValue > 0.5) {
-              const pixelIndex = i * 4;
-              data[pixelIndex] = 0; // R
-              data[pixelIndex + 1] = 255; // G
-              data[pixelIndex + 2] = 0; // B
-              data[pixelIndex + 3] = 100; // Alpha (transparency)
-            }
+            const v = maskData[i]; // 0..1
+            const pixelIndex = i * 4;
+
+            const origR = data[pixelIndex];
+            const origG = data[pixelIndex + 1];
+            const origB = data[pixelIndex + 2];
+
+            const strength = 0.5;
+
+            const w = v * strength;
+
+            data[pixelIndex] = origR * (1 - w) + overlayColor.r * w;
+            data[pixelIndex + 1] = origG * (1 - w) + overlayColor.g * w;
+            data[pixelIndex + 2] = origB * (1 - w) + overlayColor.b * w;
+            data[pixelIndex + 3] = 255;
           }
 
           canvasCtx.putImageData(imageData, 0, 0);
         }
 
-        // Vẽ landmarks và connections
         if (result.landmarks && result.landmarks.length > 0) {
           for (const landmarks of result.landmarks) {
             drawingUtils.drawLandmarks(landmarks, {
