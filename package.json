@@ -37,7 +37,9 @@
     "playwright": "^1.55.1"
   },
   "dependencies": {
-    "@app/main": "*"
+    "@app/main": "*",
+    "@mediapipe/tasks-vision": "^0.10.10",
+    "vitest": "^4.0.9"
   },
   "build": {
     "productName": "AppName",
