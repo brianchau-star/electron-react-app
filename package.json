@@ -38,5 +38,28 @@
   },
   "dependencies": {
     "@app/main": "*"
+  },
+  "build": {
+    "productName": "AppName",
+    "appId": "com.neeto.AppName",
+    "mac": {
+      "target": {
+        "target": "default",
+        "arch": [
+          "arm64",
+          "x64"
+        ]
+      },
+      "type": "distribution",
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Please give us access to your microphone",
+        "NSCameraUsageDescription": "Please give us access to your camera",
+        "com.apple.security.device.camera": true,
+        "com.apple.security.device.microphone": true,
+        "com.apple.security.device.audio-input": true
+      }
+    }
   }
 }
