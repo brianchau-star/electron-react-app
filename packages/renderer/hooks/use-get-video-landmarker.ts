@@ -16,7 +16,7 @@ export async function useGetVideoPoseLandmarker() {
       outputSegmentationMasks: true,
       baseOptions: {
         modelAssetPath,
-        delegate: 'CPU',
+        delegate: 'GPU',
       },
     },
   );

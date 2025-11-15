@@ -1,7 +1,158 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
+import * as Vision from '@mediapipe/tasks-vision';
 import { PoseLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
 import { useGetVideoPoseLandmarker } from '../hooks/use-get-video-landmarker';
+
+const iceOffscreenCanvas = document.createElement('canvas');
+const iceOffscreenCtx = iceOffscreenCanvas.getContext('2d', {
+  willReadFrequently: true,
+})!;
+
+let smoothedMaskData: Float32Array | null = null;
+
+function getSmoothedMaskData(rawMaskData: Float32Array) {
+  const alpha = 0.2;
+
+  if (!smoothedMaskData || smoothedMaskData.length !== rawMaskData.length) {
+    smoothedMaskData = new Float32Array(rawMaskData);
+    return smoothedMaskData;
+  }
+
+  for (let i = 0; i < rawMaskData.length; i++) {
+    smoothedMaskData[i] =
+      smoothedMaskData[i] * (1 - alpha) + rawMaskData[i] * alpha;
+  }
+
+  return smoothedMaskData;
+}
+
+const iceImage = new Image();
+iceImage.crossOrigin = 'anonymous';
+iceImage.src =
+  'https://cdn.fessior.com/content/fessior-tiktok-dev/ice-effect.jpeg';
+
+let iceImageLoaded = false;
+iceImage.onload = () => {
+  iceImageLoaded = true;
+};
+
+function buildIceLayerFromMask(mask: Vision.MPMask) {
+  if (!iceImageLoaded) return;
+
+  const maskWidth = mask.width;
+  const maskHeight = mask.height;
+  const rawMaskData = mask.getAsFloat32Array();
+  const smooth = getSmoothedMaskData(rawMaskData);
+
+  iceOffscreenCanvas.width = maskWidth;
+  iceOffscreenCanvas.height = maskHeight;
+
+  iceOffscreenCtx.clearRect(0, 0, maskWidth, maskHeight);
+  iceOffscreenCtx.drawImage(iceImage, 0, 0, maskWidth, maskHeight);
+
+  const iceImageData = iceOffscreenCtx.getImageData(
+    0,
+    0,
+    maskWidth,
+    maskHeight,
+  );
+  const iceData = iceImageData.data;
+
+  const hardThreshold = 0.5;
+  const maxInnerAlpha = 0.5;
+  const borderBoost = 1.15;
+
+  const insideMask = new Uint8Array(maskWidth * maskHeight);
+
+  for (let i = 0; i < smooth.length; i++) {
+    const v = smooth[i];
+    insideMask[i] = v >= hardThreshold ? 1 : 0;
+
+    if (!insideMask[i]) {
+      const idx = i * 4;
+      iceData[idx + 3] = 0;
+    }
+  }
+
+  const growRadius = 6;
+  const growR2 = growRadius * growRadius;
+  const grownMask = new Uint8Array(maskWidth * maskHeight);
+
+  for (let y = 0; y < maskHeight; y++) {
+    for (let x = 0; x < maskWidth; x++) {
+      const i = y * maskWidth + x;
+      if (!insideMask[i]) continue;
+
+      for (let dy = -growRadius; dy <= growRadius; dy++) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= maskHeight) continue;
+
+        for (let dx = -growRadius; dx <= growRadius; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= maskWidth) continue;
+
+          const d2 = dx * dx + dy * dy;
+          if (d2 > growR2) continue;
+
+          const ni = ny * maskWidth + nx;
+          grownMask[ni] = 1;
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < insideMask.length; i++) {
+    insideMask[i] = grownMask[i];
+  }
+
+  const borderIndices: number[] = [];
+
+  for (let y = 0; y < maskHeight; y++) {
+    for (let x = 0; x < maskWidth; x++) {
+      const i = y * maskWidth + x;
+      if (!insideMask[i]) continue;
+
+      const idx = i * 4;
+
+      let isBorder = false;
+      const neighbors = [
+        [x - 1, y],
+        [x + 1, y],
+        [x, y - 1],
+        [x, y + 1],
+      ];
+
+      for (const [nx, ny] of neighbors) {
+        if (nx < 0 || nx >= maskWidth || ny < 0 || ny >= maskHeight) {
+          isBorder = true;
+          break;
+        }
+        const ni = ny * maskWidth + nx;
+        if (!insideMask[ni]) {
+          isBorder = true;
+          break;
+        }
+      }
+
+      let alpha = maxInnerAlpha * 255;
+
+      if (isBorder) {
+        borderIndices.push(i);
+
+        iceData[idx] = Math.min(255, iceData[idx] * borderBoost + 30);
+        iceData[idx + 1] = Math.min(255, iceData[idx + 1] * borderBoost + 50);
+        iceData[idx + 2] = Math.min(255, iceData[idx + 2] * borderBoost + 70);
+
+        alpha = 255;
+      }
+
+      iceData[idx + 3] = alpha;
+    }
+  }
+
+  iceOffscreenCtx.putImageData(iceImageData, 0, 0);
+}
 
 function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -28,7 +179,7 @@ function App() {
 
     if (!video || !canvas || !poseLandmarker) return;
 
-    const canvasCtx = canvas.getContext('2d');
+    const canvasCtx = canvas.getContext('2d', { willReadFrequently: true });
     if (!canvasCtx) return;
     const drawingUtils = new DrawingUtils(canvasCtx);
 
@@ -44,59 +195,29 @@ function App() {
         const result = poseLandmarker.detectForVideo(video, startTimeMs);
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+
         canvasCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        // Vẽ segmentation masks
-        if (result.segmentationMasks && result.segmentationMasks.length > 0) {
+
+        if (
+          result.segmentationMasks &&
+          result.segmentationMasks.length > 0 &&
+          iceImageLoaded
+        ) {
           const mask = result.segmentationMasks[0];
-          const maskData = mask.getAsFloat32Array();
-          const imageData = canvasCtx.getImageData(
+
+          buildIceLayerFromMask(mask);
+
+          canvasCtx.drawImage(
+            iceOffscreenCanvas,
+            0,
+            0,
+            iceOffscreenCanvas.width,
+            iceOffscreenCanvas.height,
             0,
             0,
             canvas.width,
             canvas.height,
           );
-          const data = imageData.data;
-
-          const overlayColor = { r: 0, g: 255, b: 0 };
-
-          for (let i = 0; i < mask.width * mask.height; i++) {
-            const v = maskData[i]; // 0..1
-            const pixelIndex = i * 4;
-
-            const origR = data[pixelIndex];
-            const origG = data[pixelIndex + 1];
-            const origB = data[pixelIndex + 2];
-
-            const strength = 0.5;
-
-            const w = v * strength;
-
-            data[pixelIndex] = origR * (1 - w) + overlayColor.r * w;
-            data[pixelIndex + 1] = origG * (1 - w) + overlayColor.g * w;
-            data[pixelIndex + 2] = origB * (1 - w) + overlayColor.b * w;
-            data[pixelIndex + 3] = 255;
-          }
-
-          canvasCtx.putImageData(imageData, 0, 0);
-        }
-
-        if (result.landmarks && result.landmarks.length > 0) {
-          for (const landmarks of result.landmarks) {
-            drawingUtils.drawLandmarks(landmarks, {
-              color: '#00FF00',
-              radius: (data) =>
-                DrawingUtils.lerp(data.from!.z, -0.15, 0.1, 5, 1),
-            });
-
-            drawingUtils.drawConnectors(
-              landmarks,
-              PoseLandmarker.POSE_CONNECTIONS,
-              {
-                color: '#00FF00',
-                lineWidth: 2,
-              },
-            );
-          }
         }
 
         canvasCtx.restore();
@@ -129,7 +250,7 @@ function App() {
     } else {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 1280, height: 720 },
+          video: { width: 640, height: 480 },
           audio: false,
         });
 
