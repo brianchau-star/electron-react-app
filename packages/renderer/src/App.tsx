@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import * as Vision from '@mediapipe/tasks-vision';
 import { PoseLandmarker, DrawingUtils } from '@mediapipe/tasks-vision';
-import { useGetVideoPoseLandmarker } from '../hooks/use-get-video-landmarker';
+import MediaPipeService from '../services/media-pipe.service';
 
 const iceOffscreenCanvas = document.createElement('canvas');
 const iceOffscreenCtx = iceOffscreenCanvas.getContext('2d', {
@@ -12,7 +12,7 @@ const iceOffscreenCtx = iceOffscreenCanvas.getContext('2d', {
 let smoothedMaskData: Float32Array | null = null;
 
 function getSmoothedMaskData(rawMaskData: Float32Array) {
-  const alpha = 0.2;
+  const alpha = 0.7;
 
   if (!smoothedMaskData || smoothedMaskData.length !== rawMaskData.length) {
     smoothedMaskData = new Float32Array(rawMaskData);
@@ -59,9 +59,9 @@ function buildIceLayerFromMask(mask: Vision.MPMask) {
   );
   const iceData = iceImageData.data;
 
-  const hardThreshold = 0.5;
-  const maxInnerAlpha = 0.5;
-  const borderBoost = 1.15;
+  const hardThreshold = 0.4;
+  const maxInnerAlpha = 0.4;
+  const borderBoost = 1;
 
   const insideMask = new Uint8Array(maskWidth * maskHeight);
 
@@ -165,7 +165,8 @@ function App() {
 
   const initMediaPipe = useCallback(async () => {
     try {
-      poseLandmarkerRef.current = await useGetVideoPoseLandmarker();
+      poseLandmarkerRef.current =
+        await MediaPipeService.getVideoPoseLandmarker();
       console.log('PoseLandmarker initialized', poseLandmarkerRef.current);
     } catch (error) {
       console.error('Failed to initialize:', error);
@@ -181,7 +182,6 @@ function App() {
 
     const canvasCtx = canvas.getContext('2d', { willReadFrequently: true });
     if (!canvasCtx) return;
-    const drawingUtils = new DrawingUtils(canvasCtx);
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
